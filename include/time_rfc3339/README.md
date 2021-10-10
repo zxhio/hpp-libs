@@ -24,10 +24,12 @@ int sec = time_rfc3339::Time::now().second();
 ### Format time
 
 ```c++
-std::string t = time_rfc3339::Time::now().format();
+std::string time_str = time_rfc3339::Time::now().format();
 ```
 
-**1985-04-12T23:20:50.52**
+The format of the `time_str` output is as follows
+
+**1985-04-12T23:20:50.52Z**
 This represents 20 minutes and 50.52 seconds after the 23rd hour of April 12th, 1985 in UTC.
 
 **2021-10-10T05:46:58:343241947+08:00**
