@@ -189,7 +189,7 @@ private:
       return 0;
 
     char *p = to;
-    p += formatChar(p, ':');
+    p += formatChar(p, '.');
     p += formatUInt(p, frac, fmtlen);
     return p - to;
   }
