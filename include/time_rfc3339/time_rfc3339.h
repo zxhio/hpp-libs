@@ -1,6 +1,14 @@
+//===- time_rfc3339.h - Time library for RFC3339 ----------------*- C++ -*-===//
+//
+/// \file
+/// Date and time library for RFC3339 with C++11 implementation.
+//
+// Author:  zxh
+// Date:    2021/10/11 21:26:25
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
-#include <inttypes.h>
 #include <time.h>
 
 #include <chrono>
@@ -65,15 +73,28 @@ static inline size_t formatChar(char *to, char c) {
   return sizeof(char);
 }
 
+enum TimeFieldLen : size_t {
+  Year = 4,
+  Month = 2,
+  Day = 2,
+  Hour = 2,
+  Minute = 2,
+  Second = 2,
+};
+
+enum SecFracLen : size_t { Null = 0, Milli = 3, Macro = 6, Nano = 9 };
+
 class Time {
 public:
   using TimePoint = std::chrono::time_point<std::chrono::system_clock,
                                             std::chrono::nanoseconds>;
   Time() = delete;
-  Time(TimePoint tp) : tp_(tp) {}
-
   Time(const Time &) = default;
   Time &operator=(const Time &) = default;
+
+  explicit Time(time_t second)
+      : Time(TimePoint(std::chrono::seconds(second))) {}
+  explicit Time(const TimePoint &tp) : tp_(tp) {}
 
   /// Current time.
   static Time now() { return Time(std::chrono::system_clock::now()); }
@@ -122,22 +143,29 @@ public:
     return std::make_pair(t_off, t_zone);
   }
 
-  /// Standard date-time format using RFC3339 specification.
+  /// Standard date-time full format using RFC3339 specification.
   /// e.g.
-  ///   2021-10-10T23:20:50.52Z
-  ///   2021-10-10T16:39:57-08:00
-  ///   2021-10-10T05:46:58:343241947+08:00
-  std::string format() const {
-    char datetime[40];
-    char *p = datetime;
-    struct tm t = toTm();
+  ///   2021-10-10T13:46:58Z
+  ///   2021-10-10T05:46:58+08:00
+  std::string format() const { return formatInternal(SecFracLen::Null); }
 
-    p += formatDate(p, t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
-    p += formatChar(p, 'T');
-    p += formatTime(p, t.tm_hour, t.tm_min, t.tm_sec, nanosecond());
+  /// Standard date-time format with millisecond using RFC3339 specification.
+  /// e.g.
+  ///   2021-10-10T13:46:58.123Z
+  ///   2021-10-10T05:46:58.123+08:00
+  std::string formatMilli() const { return formatInternal(SecFracLen::Milli); }
 
-    return std::string(datetime, p - datetime);
-  }
+  /// Standard date-time format with macrosecond using RFC3339 specification.
+  /// e.g.
+  ///   2021-10-10T13:46:58.123456Z
+  ///   2021-10-10T05:46:58.123456+08:00
+  std::string formatMacro() const { return formatInternal(SecFracLen::Macro); }
+
+  /// Standard date-time format with nanosecond using RFC3339 specification.
+  /// e.g.
+  ///   2021-10-10T13:46:58.123456789Z
+  ///   2021-10-10T05:46:58.123456789+08:00
+  std::string formatNano() const { return formatInternal(SecFracLen::Nano); }
 
 private:
   struct tm toTm() const {
@@ -147,50 +175,62 @@ private:
     // gmtime_r() is 150% faster than localtime_r() because it doesn't need to
     // calculate the time zone. For a more faster implementation refer to
     // musl-libc, which is 10% faster than the glibc gmtime_r().
-    //   __secs_to_tm(c, &t);
-    // ref: https://git.musl-libc.org/cgit/musl/tree/src/time/__secs_to_tm.c#n11
+    // ref:
+    // https://git.musl-libc.org/cgit/musl/tree/src/time/gmtime_r.c?h=v1.2.2#n4
     gmtime_r(&c, &t);
 
     return t;
   }
 
+  std::string formatInternal(size_t fraclen) const {
+    char datetime[40];
+    char *p = datetime;
+    struct tm t = toTm();
+
+    p += formatDate(p, t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+    p += formatChar(p, 'T');
+    p += formatTime(p, t.tm_hour, t.tm_min, t.tm_sec, fraclen);
+
+    return std::string(datetime, p - datetime);
+  }
+
   size_t formatDate(char *to, int year, int mon, int mday) const {
     char *p = to;
-    p += formatUInt(p, year, 4);
+    p += formatUInt(p, year, TimeFieldLen::Year);
     p += formatChar(p, '-');
-    p += formatUInt(p, mon, 2);
+    p += formatUInt(p, mon, TimeFieldLen::Month);
     p += formatChar(p, '-');
-    p += formatUInt(p, mday, 2);
+    p += formatUInt(p, mday, TimeFieldLen::Day);
     return p - to;
   }
 
   size_t formatTime(char *to, int hour, int min, int sec,
-                    int64_t secfrac) const {
+                    size_t fraclen) const {
     char *p = to;
-    p += formatPartialTime(p, hour, min, sec, secfrac);
+    p += formatPartialTime(p, hour, min, sec, fraclen);
     p += formatTimeOff(p);
     return p - to;
   }
 
   size_t formatPartialTime(char *to, int hour, int min, int sec,
-                           int64_t secfrac) const {
+                           size_t fraclen) const {
     char *p = to;
-    p += formatUInt(p, hour, 2);
+    p += formatUInt(p, hour, TimeFieldLen::Hour);
     p += formatChar(p, ':');
-    p += formatUInt(p, min, 2);
+    p += formatUInt(p, min, TimeFieldLen::Minute);
     p += formatChar(p, ':');
-    p += formatUInt(p, sec, 2);
-    p += formatSecfrac(p, secfrac, 9);
+    p += formatUInt(p, sec, TimeFieldLen::Second);
+    p += formatSecfrac(p, nanosecond(), fraclen);
     return p - to;
   }
 
-  size_t formatSecfrac(char *to, int64_t frac, size_t fmtlen) const {
-    if (frac == 0)
+  size_t formatSecfrac(char *to, int frac, size_t fraclen) const {
+    if (fraclen == 0 || frac == 0)
       return 0;
 
     char *p = to;
     p += formatChar(p, '.');
-    p += formatUInt(p, frac, fmtlen);
+    p += formatUInt(p, frac, fraclen);
     return p - to;
   }
 
@@ -202,9 +242,9 @@ private:
       p += formatChar(p, 'Z');
     } else {
       p += formatChar(p, off < 0 ? '-' : '+');
-      p += formatUInt(p, off / 3600, 2);
+      p += formatUInt(p, off / 3600, TimeFieldLen::Hour);
       p += formatChar(p, ':');
-      p += formatUInt(p, off % 3600, 2);
+      p += formatUInt(p, off % 3600, TimeFieldLen::Minute);
     }
 
     return p - to;
