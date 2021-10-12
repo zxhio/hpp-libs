@@ -65,3 +65,4 @@ Introduce `thread_local` to avoid race conditions between threads.
 
 ## Reference
 1. [Date and Time on the Internet: Timestamps](https://www.rfc-editor.org/rfc/inline-errata/rfc3339.html)
+2. [gmtime_t() implementation of musl-libc](https://git.musl-libc.org/cgit/musl/tree/src/time/gmtime_r.c?h=v1.2.2#n4)
