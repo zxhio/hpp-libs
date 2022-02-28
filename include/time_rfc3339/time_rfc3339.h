@@ -36,10 +36,8 @@ static constexpr char DigitsTable[200] = {
 
 template <typename T,
           typename std::enable_if<std::is_integral<T>::value, T>::type = 0>
-static inline size_t formatUInt(char *to, T v, size_t fmtlen) {
-  char buf[24];
-  char *p = buf;
-  size_t length = 0;
+static inline size_t formatUIntInternal(T v, char to[]) {
+  char *p = to;
 
   while (v >= 100) {
     const unsigned idx = (v % 100) << 1;
@@ -56,16 +54,24 @@ static inline size_t formatUInt(char *to, T v, size_t fmtlen) {
     *p++ = DigitsTable[idx];
   }
 
-  length = p - buf;
+  return p - to;
+}
 
-  for (size_t i = length; i < fmtlen; i++)
+template <typename T,
+          typename std::enable_if<std::is_integral<T>::value, T>::type = 0>
+static inline size_t formatUIntWidth(T v, char *to, size_t fmtLen) {
+  char buf[sizeof(v) * 4];
+  size_t len = formatUIntInternal(v, buf);
+  char *p = buf + len;
+
+  for (size_t i = len; i < fmtLen; i++)
     *to++ = '0';
 
-  size_t minlen = std::min(length, fmtlen);
-  for (size_t i = 0; i < minlen; ++i)
+  size_t minLen = std::min(len, fmtLen);
+  for (size_t i = 0; i < minLen; ++i)
     *to++ = *--p;
 
-  return fmtlen;
+  return fmtLen;
 }
 
 static inline size_t formatChar(char *to, char c) {
@@ -82,7 +88,7 @@ enum TimeFieldLen : size_t {
   Second = 2,
 };
 
-enum SecFracLen : size_t { Null = 0, Milli = 3, Macro = 6, Nano = 9 };
+enum SecFracLen : size_t { Sec = 0, Milli = 3, Macro = 6, Nano = 9 };
 
 class Time {
 public:
@@ -147,7 +153,7 @@ public:
   /// e.g.
   ///   2021-10-10T13:46:58Z
   ///   2021-10-10T05:46:58+08:00
-  std::string format() const { return formatInternal(SecFracLen::Null); }
+  std::string format() const { return formatInternal(SecFracLen::Sec); }
 
   /// Standard date-time format with millisecond using RFC3339 specification.
   /// e.g.
@@ -177,60 +183,61 @@ private:
     // musl-libc, which is 10% faster than the glibc gmtime_r().
     // ref:
     // https://git.musl-libc.org/cgit/musl/tree/src/time/gmtime_r.c?h=v1.2.2#n4
-    gmtime_r(&c, &t);
+    // gmtime_r(&c, &t);
+    localtime_r(&c, &t);
 
     return t;
   }
 
-  std::string formatInternal(size_t fraclen) const {
+  std::string formatInternal(size_t fracLen) const {
     char datetime[40];
     char *p = datetime;
     struct tm t = toTm();
 
     p += formatDate(p, t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
     p += formatChar(p, 'T');
-    p += formatTime(p, t.tm_hour, t.tm_min, t.tm_sec, fraclen);
+    p += formatTime(p, t.tm_hour, t.tm_min, t.tm_sec, fracLen);
 
     return std::string(datetime, p - datetime);
   }
 
   size_t formatDate(char *to, int year, int mon, int mday) const {
     char *p = to;
-    p += formatUInt(p, year, TimeFieldLen::Year);
+    p += formatUIntWidth(year, p, TimeFieldLen::Year);
     p += formatChar(p, '-');
-    p += formatUInt(p, mon, TimeFieldLen::Month);
+    p += formatUIntWidth(mon, p, TimeFieldLen::Month);
     p += formatChar(p, '-');
-    p += formatUInt(p, mday, TimeFieldLen::Day);
+    p += formatUIntWidth(mday, p, TimeFieldLen::Day);
     return p - to;
   }
 
   size_t formatTime(char *to, int hour, int min, int sec,
-                    size_t fraclen) const {
+                    size_t fracLen) const {
     char *p = to;
-    p += formatPartialTime(p, hour, min, sec, fraclen);
+    p += formatPartialTime(p, hour, min, sec, fracLen);
     p += formatTimeOff(p);
     return p - to;
   }
 
   size_t formatPartialTime(char *to, int hour, int min, int sec,
-                           size_t fraclen) const {
+                           size_t fracLen) const {
     char *p = to;
-    p += formatUInt(p, hour, TimeFieldLen::Hour);
+    p += formatUIntWidth(hour, p, TimeFieldLen::Hour);
     p += formatChar(p, ':');
-    p += formatUInt(p, min, TimeFieldLen::Minute);
+    p += formatUIntWidth(min, p, TimeFieldLen::Minute);
     p += formatChar(p, ':');
-    p += formatUInt(p, sec, TimeFieldLen::Second);
-    p += formatSecfrac(p, nanosecond(), fraclen);
+    p += formatUIntWidth(sec, p, TimeFieldLen::Second);
+    p += formatSecFrac(p, nanosecond(), fracLen);
     return p - to;
   }
 
-  size_t formatSecfrac(char *to, int frac, size_t fraclen) const {
-    if (fraclen == 0 || frac == 0)
+  size_t formatSecFrac(char *to, int frac, size_t fracLen) const {
+    if (fracLen == 0 || frac == 0)
       return 0;
 
     char *p = to;
     p += formatChar(p, '.');
-    p += formatUInt(p, frac, fraclen);
+    p += formatUIntWidth(frac, p, fracLen);
     return p - to;
   }
 
@@ -242,9 +249,9 @@ private:
       p += formatChar(p, 'Z');
     } else {
       p += formatChar(p, off < 0 ? '-' : '+');
-      p += formatUInt(p, off / 3600, TimeFieldLen::Hour);
+      p += formatUIntWidth(off / 3600, p, TimeFieldLen::Hour);
       p += formatChar(p, ':');
-      p += formatUInt(p, off % 3600, TimeFieldLen::Minute);
+      p += formatUIntWidth(off % 3600, p, TimeFieldLen::Minute);
     }
 
     return p - to;
