@@ -13,4 +13,8 @@ option(HPP_LIBS_BUILD_EXAMPLES "Build examples" OFF)
 if(HPP_LIBS_BUILD_EXAMPLES)
   add_executable(slog_example examples/slog_example.cpp)
   target_link_libraries(slog_example PRIVATE hpp::libs)
+
+  add_executable(slog_benchmark examples/slog_benchmark.cpp)
+  target_link_libraries(slog_benchmark PRIVATE hpp::libs)
+  target_compile_options(slog_benchmark PRIVATE -O2)
 endif()

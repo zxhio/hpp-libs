@@ -56,6 +56,16 @@ template <typename T>
 inline constexpr bool is_field_v =
     is_field<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
+struct StderrEmitter {
+  static void emit(Level, const char *data, std::size_t n) noexcept {
+    (void)::write(STDERR_FILENO, data, n);
+  }
+};
+
+struct NullEmitter {
+  static void emit(Level, const char *, std::size_t) noexcept {}
+};
+
 namespace detail {
 
 template <std::size_t Capacity>
@@ -284,15 +294,12 @@ private:
   BufferT &buf_;
 };
 
-inline void emit(Level, const char *data, std::size_t n) noexcept {
-  (void)::write(STDERR_FILENO, data, n);
-}
-
 } // namespace detail
 
-template <typename BufferT, std::size_t N, typename... Fields>
-inline void log_with_buffer(Level lv, const char (&msg)[N],
-                            const Fields &...fields) noexcept {
+template <typename Emitter = StderrEmitter, typename BufferT = detail::DefaultBuffer,
+          std::size_t N, typename... Fields>
+inline void log(Level lv, const char (&msg)[N],
+                const Fields &...fields) noexcept {
   static_assert((is_field_v<Fields> && ...),
                 "all args after msg must be K(...)");
 
@@ -303,13 +310,7 @@ inline void log_with_buffer(Level lv, const char (&msg)[N],
   (rec.write_field(fields), ...);
   rec.end();
 
-  detail::emit(lv, buf.data(), buf.size());
-}
-
-template <std::size_t N, typename... Fields>
-inline void log(Level lv, const char (&msg)[N],
-                const Fields &...fields) noexcept {
-  log_with_buffer<detail::DefaultBuffer>(lv, msg, fields...);
+  Emitter::emit(lv, buf.data(), buf.size());
 }
 
 } // namespace slog

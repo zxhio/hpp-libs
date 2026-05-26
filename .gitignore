@@ -31,5 +31,9 @@ _deps/
 .DS_Store
 Thumbs.db
 
+# Profiling
+perf.data
+perf.data.old
+
 # Logs
 *.log
