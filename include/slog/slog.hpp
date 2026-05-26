@@ -1,10 +1,12 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <charconv>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -326,6 +328,44 @@ inline void write_value(BufferT &buf, const T &v) noexcept {
                                                                             v);
 }
 
+template <typename BufferT>
+inline void write_timestamp(BufferT &buf) noexcept {
+  using namespace std::chrono;
+  auto now = system_clock::now();
+  auto epoch_ms = duration_cast<milliseconds>(now.time_since_epoch()).count();
+  auto tt = system_clock::to_time_t(now);
+  std::tm tm;
+  ::localtime_r(&tt, &tm);
+
+  char tmp[24]; // "2026-05-26T15:30:45.123"
+  tmp[0] = static_cast<char>('0' + (tm.tm_year + 1900) / 1000);
+  tmp[1] = static_cast<char>('0' + ((tm.tm_year + 1900) / 100) % 10);
+  tmp[2] = static_cast<char>('0' + ((tm.tm_year + 1900) / 10) % 10);
+  tmp[3] = static_cast<char>('0' + (tm.tm_year + 1900) % 10);
+  tmp[4] = '-';
+  tmp[5] = static_cast<char>('0' + (tm.tm_mon + 1) / 10);
+  tmp[6] = static_cast<char>('0' + (tm.tm_mon + 1) % 10);
+  tmp[7] = '-';
+  tmp[8] = static_cast<char>('0' + tm.tm_mday / 10);
+  tmp[9] = static_cast<char>('0' + tm.tm_mday % 10);
+  tmp[10] = 'T';
+  tmp[11] = static_cast<char>('0' + tm.tm_hour / 10);
+  tmp[12] = static_cast<char>('0' + tm.tm_hour % 10);
+  tmp[13] = ':';
+  tmp[14] = static_cast<char>('0' + tm.tm_min / 10);
+  tmp[15] = static_cast<char>('0' + tm.tm_min % 10);
+  tmp[16] = ':';
+  tmp[17] = static_cast<char>('0' + tm.tm_sec / 10);
+  tmp[18] = static_cast<char>('0' + tm.tm_sec % 10);
+  tmp[19] = '.';
+  auto ms = static_cast<int>(epoch_ms % 1000);
+  tmp[20] = static_cast<char>('0' + ms / 100);
+  tmp[21] = static_cast<char>('0' + (ms / 10) % 10);
+  tmp[22] = static_cast<char>('0' + ms % 10);
+
+  buf.write(tmp, 23);
+}
+
 template <typename BufferT = DefaultBuffer>
 class Record {
 public:
@@ -353,7 +393,8 @@ public:
 
 private:
   void write_prefix(Level lv) noexcept {
-    buf_.write("[");
+    write_timestamp(buf_);
+    buf_.write(" [");
     const auto name = level_name(lv);
     buf_.write(name.data(), name.size());
     buf_.write("] msg=");
