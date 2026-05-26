@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <unistd.h>
@@ -244,6 +246,69 @@ template <typename BufferT>
 struct ValueWriter<BufferT, std::string_view> {
   static void write(BufferT &buf, std::string_view sv) noexcept {
     write_quoted(buf, sv);
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, char> {
+  static void write(BufferT &buf, char c) noexcept {
+    write_quoted(buf, std::string_view{&c, 1});
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, std::string> {
+  static void write(BufferT &buf, const std::string &s) noexcept {
+    write_quoted(buf, std::string_view{s});
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, float> {
+  static void write(BufferT &buf, float v) noexcept {
+    char tmp[64];
+    int n = std::snprintf(tmp, sizeof(tmp), "%g", v);
+    if (n > 0) {
+      buf.write(tmp, static_cast<std::size_t>(n));
+    }
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, double> {
+  static void write(BufferT &buf, double v) noexcept {
+    char tmp[64];
+    int n = std::snprintf(tmp, sizeof(tmp), "%g", v);
+    if (n > 0) {
+      buf.write(tmp, static_cast<std::size_t>(n));
+    }
+  }
+};
+
+template <typename BufferT, typename T>
+struct ValueWriter<
+    BufferT, T,
+    std::enable_if_t<std::is_enum_v<T>>> {
+  static void write(BufferT &buf, T v) noexcept {
+    write_i64(buf, static_cast<std::int64_t>(static_cast<std::underlying_type_t<T>>(v)));
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, const void *> {
+  static void write(BufferT &buf, const void *p) noexcept {
+    char tmp[32];
+    int n = std::snprintf(tmp, sizeof(tmp), "%p", p);
+    if (n > 0) {
+      buf.write(tmp, static_cast<std::size_t>(n));
+    }
+  }
+};
+
+template <typename BufferT>
+struct ValueWriter<BufferT, void *> {
+  static void write(BufferT &buf, void *p) noexcept {
+    ValueWriter<BufferT, const void *>::write(buf, p);
   }
 };
 
