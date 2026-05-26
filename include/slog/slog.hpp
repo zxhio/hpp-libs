@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <charconv>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -269,9 +270,9 @@ template <typename BufferT>
 struct ValueWriter<BufferT, float> {
   static void write(BufferT &buf, float v) noexcept {
     char tmp[64];
-    int n = std::snprintf(tmp, sizeof(tmp), "%g", v);
-    if (n > 0) {
-      buf.write(tmp, static_cast<std::size_t>(n));
+    auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), v);
+    if (ec == std::errc{}) {
+      buf.write(tmp, static_cast<std::size_t>(p - tmp));
     }
   }
 };
@@ -280,9 +281,9 @@ template <typename BufferT>
 struct ValueWriter<BufferT, double> {
   static void write(BufferT &buf, double v) noexcept {
     char tmp[64];
-    int n = std::snprintf(tmp, sizeof(tmp), "%g", v);
-    if (n > 0) {
-      buf.write(tmp, static_cast<std::size_t>(n));
+    auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), v);
+    if (ec == std::errc{}) {
+      buf.write(tmp, static_cast<std::size_t>(p - tmp));
     }
   }
 };

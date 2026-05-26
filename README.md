@@ -8,6 +8,10 @@ Header-only C++ utility libraries. Each component lives in its own directory und
 |-----------|------|-----------|-------------|
 | slog | `include/slog/` | `slog` | Lightweight structured logging |
 
+## Requirements
+
+- C++17 or later
+
 ## Integration
 
 ### CMake (FetchContent)
@@ -74,14 +78,25 @@ LOG_ERROR("processed"); // formats and emits
 
 ## Benchmark
 
-Measured on Intel i7 (5M iterations, `-O2`):
+Measured on Intel i7-12700, `-O2`, 5M iterations:
 
 ```
-                               Emitter    no field   1 field    2 fields   3 fields
-                               -------    --------   -------    --------   --------
-StderrEmitter (real I/O)       stderr       12.6 ns   18.5 ns   25.2 ns    33.9 ns
-NullEmitter (format only)      null          4.4 ns   11.4 ns   18.9 ns    26.1 ns
-NullEmitter (level filtered)   null          0.2 ns    0.4 ns    0.4 ns     0.6 ns
+--- integer fields ---
+log (no field)                   4.5 ns/op
+log (1 field)                   12.0 ns/op
+log (2 fields)                  19.2 ns/op
+log (3 fields)                  26.5 ns/op
+
+--- float/double fields (via std::to_chars) ---
+log (float)                    27.6 ns/op
+log (double)                   35.8 ns/op
+log (mixed int+float)          63.3 ns/op
+
+--- level filtered (early return) ---
+log (no field)                   0.2 ns/op
+log (1 field)                    0.5 ns/op
+log (2 fields)                  0.5 ns/op
+log (3 fields)                  0.7 ns/op
 ```
 
 ## License

@@ -42,6 +42,25 @@ int main() {
                                  slog::K("port", 8080));
   });
 
+  std::fprintf(stdout, "\n--- float types ---\n");
+
+  bench("log (float)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "metric",
+                                 slog::K("value", 3.14f));
+  });
+
+  bench("log (double)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "metric",
+                                 slog::K("value", 3.14159265));
+  });
+
+  bench("log (mixed int+float)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
+                                 slog::K("id", i),
+                                 slog::K("latency", 12.5),
+                                 slog::K("code", 200));
+  });
+
   std::fprintf(stdout, "\n--- level filtered (g_level=Error, Info skipped) ---\n");
   slog::g_level = slog::Level::Error;
 
