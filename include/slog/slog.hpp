@@ -18,6 +18,8 @@ enum class Level : std::uint8_t {
   Error,
 };
 
+inline Level g_level = Level::Info;
+
 inline std::string_view level_name(Level lv) noexcept {
   switch (lv) {
   case Level::Debug:
@@ -367,6 +369,9 @@ inline void log(Level lv, const char (&msg)[N],
                 const Fields &...fields) noexcept {
   static_assert((is_field_v<Fields> && ...),
                 "all args after msg must be K(...)");
+
+  if (lv < g_level)
+    return;
 
   BufferT buf;
   detail::Record<BufferT> rec{buf};

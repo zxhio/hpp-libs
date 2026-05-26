@@ -18,6 +18,33 @@ double bench(const char *name, int n, Fn &&fn) {
 int main() {
   constexpr int N = 5000000;
 
+  slog::g_level = slog::Level::Debug;
+
+  bench("log (no field)", N, [](int) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "hello world");
+  });
+
+  bench("log (1 field)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
+                                 slog::K("id", i));
+  });
+
+  bench("log (2 fields)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
+                                 slog::K("id", i),
+                                 slog::K("addr", "127.0.0.1"));
+  });
+
+  bench("log (3 fields)", N, [](int i) {
+    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
+                                 slog::K("id", i),
+                                 slog::K("addr", "127.0.0.1"),
+                                 slog::K("port", 8080));
+  });
+
+  std::fprintf(stdout, "\n--- level filtered (g_level=Error, Info skipped) ---\n");
+  slog::g_level = slog::Level::Error;
+
   bench("log (no field)", N, [](int) {
     slog::log<slog::NullEmitter>(slog::Level::Info, "hello world");
   });
