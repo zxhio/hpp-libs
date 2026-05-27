@@ -1,5 +1,4 @@
 #include <slog/slog.hpp>
-#include <thread>
 
 enum class Status : int { Ok = 0, Error = 1 };
 
