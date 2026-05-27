@@ -7,8 +7,10 @@
 #include <charconv>
 #include <cstring>
 #include <ctime>
+#include <fcntl.h>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <type_traits>
 #include <unistd.h>
 
@@ -22,6 +24,10 @@ enum class Level : std::uint8_t {
 };
 
 inline Level g_level = Level::Info;
+
+using EmitFn = void (*)(Level, const char *data, std::size_t n);
+
+inline EmitFn g_emit = nullptr;
 
 inline std::string_view level_name(Level lv) noexcept {
   switch (lv) {
@@ -63,15 +69,114 @@ template <typename T>
 inline constexpr bool is_field_v =
     is_field<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
-struct StderrEmitter {
-  static void emit(Level, const char *data, std::size_t n) noexcept {
-    (void)::write(STDERR_FILENO, data, n);
+// ── SyncFileEmitter ──────────────────────────────────────────────────
+
+namespace detail {
+
+inline void write_fd(int fd, const char *data, std::size_t n) noexcept {
+  while (n > 0) {
+    auto w = ::write(fd, data, n);
+    if (w <= 0)
+      break;
+    data += static_cast<std::size_t>(w);
+    n -= static_cast<std::size_t>(w);
   }
+}
+
+inline int open_log_file(const char *path) noexcept {
+  return ::open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+}
+
+inline std::size_t file_size(int fd) noexcept {
+  struct stat st;
+  if (::fstat(fd, &st) != 0)
+    return 0;
+  return static_cast<std::size_t>(st.st_size);
+}
+
+inline void rotate_file(const char *base, int fd) noexcept {
+  ::close(fd);
+
+  auto now = std::chrono::system_clock::now();
+  auto tt = std::chrono::system_clock::to_time_t(now);
+  std::tm tm;
+  ::localtime_r(&tt, &tm);
+
+  // base.YYYYMMDDTHHMMSS.log
+  char path[512];
+  std::size_t len = std::strlen(base);
+  if (len + 24 >= sizeof(path))
+    return;
+
+  std::memcpy(path, base, len);
+  char *p = path + len;
+  *p++ = '.';
+
+  auto y = tm.tm_year + 1900;
+  *p++ = static_cast<char>('0' + y / 1000);
+  *p++ = static_cast<char>('0' + (y / 100) % 10);
+  *p++ = static_cast<char>('0' + (y / 10) % 10);
+  *p++ = static_cast<char>('0' + y % 10);
+  auto m = tm.tm_mon + 1;
+  *p++ = static_cast<char>('0' + m / 10);
+  *p++ = static_cast<char>('0' + m % 10);
+  auto d = tm.tm_mday;
+  *p++ = static_cast<char>('0' + d / 10);
+  *p++ = static_cast<char>('0' + d % 10);
+  *p++ = 'T';
+  *p++ = static_cast<char>('0' + tm.tm_hour / 10);
+  *p++ = static_cast<char>('0' + tm.tm_hour % 10);
+  *p++ = static_cast<char>('0' + tm.tm_min / 10);
+  *p++ = static_cast<char>('0' + tm.tm_min % 10);
+  *p++ = static_cast<char>('0' + tm.tm_sec / 10);
+  *p++ = static_cast<char>('0' + tm.tm_sec % 10);
+  std::memcpy(p, ".log", 4);
+  p += 4;
+  *p = '\0';
+
+  ::rename(base, path);
+}
+
+} // namespace detail
+
+class SyncFileEmitter {
+public:
+  SyncFileEmitter(const char *path, std::size_t max_size = 16 * 1024 * 1024)
+      : path_(path), fd_(detail::open_log_file(path)),
+        cur_size_(detail::file_size(fd_)), max_size_(max_size) {}
+
+  ~SyncFileEmitter() {
+    if (fd_ >= 0)
+      ::close(fd_);
+  }
+
+  SyncFileEmitter(const SyncFileEmitter &) = delete;
+  SyncFileEmitter &operator=(const SyncFileEmitter &) = delete;
+
+  void emit(Level, const char *data, std::size_t n) noexcept {
+    if (fd_ < 0)
+      return;
+
+    if (cur_size_ + n > max_size_) {
+      detail::rotate_file(path_, fd_);
+      fd_ = detail::open_log_file(path_);
+      cur_size_ = 0;
+    }
+
+    detail::write_fd(fd_, data, n);
+    cur_size_ += n;
+  }
+
+private:
+  const char *path_;
+  int fd_;
+  std::size_t cur_size_;
+  std::size_t max_size_;
 };
 
-struct NullEmitter {
-  static void emit(Level, const char *, std::size_t) noexcept {}
-};
+inline void set_emitter(EmitFn fn) noexcept { g_emit = fn; }
+
+// ── Internal buffer & formatting ─────────────────────────────────────
 
 namespace detail {
 
@@ -82,9 +187,8 @@ public:
       : begin_(data_), cur_(data_), end_(data_ + Capacity), truncated_(false) {}
 
   void write(const char *s, std::size_t n) noexcept {
-    if (n == 0) {
+    if (n == 0)
       return;
-    }
 
     const std::size_t avail = static_cast<std::size_t>(end_ - cur_);
     const std::size_t m = (n < avail) ? n : avail;
@@ -94,9 +198,8 @@ public:
       cur_ += m;
     }
 
-    if (m != n) {
+    if (m != n)
       truncated_ = true;
-    }
   }
 
   template <std::size_t N>
@@ -106,11 +209,7 @@ public:
   }
 
   const char *data() const noexcept { return begin_; }
-
-  std::size_t size() const noexcept {
-    return static_cast<std::size_t>(cur_ - begin_);
-  }
-
+  std::size_t size() const noexcept { return static_cast<std::size_t>(cur_ - begin_); }
   bool truncated() const noexcept { return truncated_; }
 
 private:
@@ -128,9 +227,8 @@ using DefaultBuffer = MediumBuffer;
 
 inline bool needs_escape(std::string_view sv) noexcept {
   for (char c : sv) {
-    if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t') {
+    if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t')
       return true;
-    }
   }
   return false;
 }
@@ -151,13 +249,11 @@ inline void write_quoted(BufferT &buf, std::string_view sv) noexcept {
     const bool esc =
         (c == '"') || (c == '\\') || (c == '\n') || (c == '\r') || (c == '\t');
 
-    if (!esc) {
+    if (!esc)
       continue;
-    }
 
-    if (i > start) {
+    if (i > start)
       buf.write(sv.data() + start, i - start);
-    }
 
     switch (c) {
     case '"':
@@ -180,9 +276,8 @@ inline void write_quoted(BufferT &buf, std::string_view sv) noexcept {
     start = i + 1;
   }
 
-  if (start < sv.size()) {
+  if (start < sv.size())
     buf.write(sv.data() + start, sv.size() - start);
-  }
 
   buf.write("\"");
 }
@@ -273,9 +368,8 @@ struct ValueWriter<BufferT, float> {
   static void write(BufferT &buf, float v) noexcept {
     char tmp[64];
     auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), v);
-    if (ec == std::errc{}) {
+    if (ec == std::errc{})
       buf.write(tmp, static_cast<std::size_t>(p - tmp));
-    }
   }
 };
 
@@ -284,18 +378,16 @@ struct ValueWriter<BufferT, double> {
   static void write(BufferT &buf, double v) noexcept {
     char tmp[64];
     auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), v);
-    if (ec == std::errc{}) {
+    if (ec == std::errc{})
       buf.write(tmp, static_cast<std::size_t>(p - tmp));
-    }
   }
 };
 
 template <typename BufferT, typename T>
-struct ValueWriter<
-    BufferT, T,
-    std::enable_if_t<std::is_enum_v<T>>> {
+struct ValueWriter<BufferT, T, std::enable_if_t<std::is_enum_v<T>>> {
   static void write(BufferT &buf, T v) noexcept {
-    write_i64(buf, static_cast<std::int64_t>(static_cast<std::underlying_type_t<T>>(v)));
+    write_i64(
+        buf, static_cast<std::int64_t>(static_cast<std::underlying_type_t<T>>(v)));
   }
 };
 
@@ -304,9 +396,8 @@ struct ValueWriter<BufferT, const void *> {
   static void write(BufferT &buf, const void *p) noexcept {
     char tmp[32];
     int n = std::snprintf(tmp, sizeof(tmp), "%p", p);
-    if (n > 0) {
+    if (n > 0)
       buf.write(tmp, static_cast<std::size_t>(n));
-    }
   }
 };
 
@@ -324,8 +415,7 @@ inline void write_value(BufferT &buf, const char (&s)[N]) noexcept {
 
 template <typename BufferT, typename T>
 inline void write_value(BufferT &buf, const T &v) noexcept {
-  ValueWriter<BufferT, std::remove_cv_t<std::remove_reference_t<T>>>::write(buf,
-                                                                            v);
+  ValueWriter<BufferT, std::remove_cv_t<std::remove_reference_t<T>>>::write(buf, v);
 }
 
 template <typename BufferT>
@@ -385,9 +475,8 @@ public:
   }
 
   void end() noexcept {
-    if (buf_.truncated()) {
+    if (buf_.truncated())
       buf_.write(" truncated=true");
-    }
     buf_.write("\n");
   }
 
@@ -405,8 +494,32 @@ private:
 
 } // namespace detail
 
-template <typename Emitter = StderrEmitter, typename BufferT = detail::DefaultBuffer,
-          std::size_t N, typename... Fields>
+// ── Global file emitter support ──────────────────────────────────────
+
+inline SyncFileEmitter *g_file_emitter = nullptr;
+
+namespace detail {
+
+inline void default_emit(Level, const char *data, std::size_t n) noexcept {
+  (void)::write(STDERR_FILENO, data, n);
+}
+
+inline void file_emit(Level, const char *data, std::size_t n) noexcept {
+  if (g_file_emitter)
+    g_file_emitter->emit(Level{}, data, n);
+}
+
+} // namespace detail
+
+inline void set_file_emitter(SyncFileEmitter &emitter) noexcept {
+  g_file_emitter = &emitter;
+  g_emit = detail::file_emit;
+}
+
+// ── Core log function ────────────────────────────────────────────────
+
+template <typename BufferT = detail::DefaultBuffer, std::size_t N,
+          typename... Fields>
 inline void log(Level lv, const char (&msg)[N],
                 const Fields &...fields) noexcept {
   static_assert((is_field_v<Fields> && ...),
@@ -422,7 +535,10 @@ inline void log(Level lv, const char (&msg)[N],
   (rec.write_field(fields), ...);
   rec.end();
 
-  Emitter::emit(lv, buf.data(), buf.size());
+  if (g_emit)
+    g_emit(lv, buf.data(), buf.size());
+  else
+    detail::default_emit(lv, buf.data(), buf.size());
 }
 
 } // namespace slog

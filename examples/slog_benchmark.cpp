@@ -19,70 +19,59 @@ int main() {
   constexpr int N = 5000000;
 
   slog::g_level = slog::Level::Debug;
+  slog::set_emitter([](slog::Level, const char *, std::size_t) noexcept {});
 
   bench("log (no field)", N, [](int) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "hello world");
+    slog::log(slog::Level::Info, "hello world");
   });
 
   bench("log (1 field)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i));
+    slog::log(slog::Level::Info, "request", slog::K("id", i));
   });
 
   bench("log (2 fields)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i),
-                                 slog::K("addr", "127.0.0.1"));
+    slog::log(slog::Level::Info, "request", slog::K("id", i),
+              slog::K("addr", "127.0.0.1"));
   });
 
   bench("log (3 fields)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i),
-                                 slog::K("addr", "127.0.0.1"),
-                                 slog::K("port", 8080));
+    slog::log(slog::Level::Info, "request", slog::K("id", i),
+              slog::K("addr", "127.0.0.1"), slog::K("port", 8080));
   });
 
   std::fprintf(stdout, "\n--- float types ---\n");
 
   bench("log (float)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "metric",
-                                 slog::K("value", 3.14f));
+    slog::log(slog::Level::Info, "metric", slog::K("value", 3.14f));
   });
 
   bench("log (double)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "metric",
-                                 slog::K("value", 3.14159265));
+    slog::log(slog::Level::Info, "metric", slog::K("value", 3.14159265));
   });
 
   bench("log (mixed int+float)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i),
-                                 slog::K("latency", 12.5),
-                                 slog::K("code", 200));
+    slog::log(slog::Level::Info, "request", slog::K("id", i),
+              slog::K("latency", 12.5), slog::K("code", 200));
   });
 
   std::fprintf(stdout, "\n--- level filtered (g_level=Error, Info skipped) ---\n");
   slog::g_level = slog::Level::Error;
 
   bench("log (no field)", N, [](int) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "hello world");
+    slog::log(slog::Level::Info, "hello world");
   });
 
   bench("log (1 field)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i));
+    slog::log(slog::Level::Info, "request", slog::K("id", i));
   });
 
   bench("log (2 fields)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i),
-                                 slog::K("addr", "127.0.0.1"));
+    slog::log(slog::Level::Info, "request", slog::K("id", i),
+              slog::K("addr", "127.0.0.1"));
   });
 
   bench("log (3 fields)", N, [](int i) {
-    slog::log<slog::NullEmitter>(slog::Level::Info, "request",
-                                 slog::K("id", i),
-                                 slog::K("addr", "127.0.0.1"),
-                                 slog::K("port", 8080));
+    slog::log(slog::Level::Info, "request", slog::K("id", i),
+              slog::K("addr", "127.0.0.1"), slog::K("port", 8080));
   });
 }

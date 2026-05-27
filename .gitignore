@@ -19,10 +19,12 @@ compile_commands.json
 CTestTestfile.cmake
 _deps/
 
-# IDE
+# IDE / Agent
 .vscode/
 .idea/
 .cache/
+.claude/
+CLAUDE.md
 *.swp
 *.swo
 *~
