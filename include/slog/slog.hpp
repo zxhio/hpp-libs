@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -11,8 +12,11 @@
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
+#include <thread>
 #include <type_traits>
 #include <unistd.h>
+
+#include "spsc.hpp"
 
 namespace slog {
 
@@ -172,6 +176,74 @@ private:
   int fd_;
   std::size_t cur_size_;
   std::size_t max_size_;
+};
+
+// ── AsyncFileEmitter ─────────────────────────────────────────────────
+
+template <std::size_t QueueCapacity = 4096, std::size_t FlushBatch = 128,
+          std::size_t MaxMsgSize = 1024>
+class AsyncFileEmitter {
+public:
+  struct Message {
+    char data[MaxMsgSize];
+    std::size_t size;
+  };
+
+  explicit AsyncFileEmitter(const char *path,
+                            std::size_t max_size = 16 * 1024 * 1024)
+      : file_(path, max_size), running_(true) {
+    worker_ = std::thread([this] { run(); });
+  }
+
+  ~AsyncFileEmitter() { stop(); }
+
+  AsyncFileEmitter(const AsyncFileEmitter &) = delete;
+  AsyncFileEmitter &operator=(const AsyncFileEmitter &) = delete;
+
+  void emit(Level, const char *data, std::size_t n) noexcept {
+    if (n > MaxMsgSize)
+      n = MaxMsgSize;
+    Message msg;
+    std::memcpy(msg.data, data, n);
+    msg.size = n;
+
+    // Drop if queue full — non-blocking for the caller
+    queue_.try_push(msg);
+  }
+
+  void stop() noexcept {
+    if (!running_.exchange(false))
+      return;
+    if (worker_.joinable())
+      worker_.join();
+    // Drain remaining
+    Message msg;
+    while (queue_.try_pop(msg))
+      file_.emit(Level{}, msg.data, msg.size);
+  }
+
+private:
+  void run() noexcept {
+    Message msg;
+    std::size_t batch = 0;
+    while (running_.load(std::memory_order_relaxed)) {
+      if (queue_.try_pop(msg)) {
+        file_.emit(Level{}, msg.data, msg.size);
+        if (++batch >= FlushBatch) {
+          batch = 0;
+          // Yield to avoid busy-spin
+          std::this_thread::yield();
+        }
+      } else {
+        std::this_thread::yield();
+      }
+    }
+  }
+
+  SyncFileEmitter file_;
+  SpscQueue<Message, QueueCapacity> queue_;
+  std::atomic<bool> running_;
+  std::thread worker_;
 };
 
 inline void set_emitter(EmitFn fn) noexcept { g_emit = fn; }
@@ -514,6 +586,22 @@ inline void file_emit(Level, const char *data, std::size_t n) noexcept {
 inline void set_file_emitter(SyncFileEmitter &emitter) noexcept {
   g_file_emitter = &emitter;
   g_emit = detail::file_emit;
+}
+
+template <std::size_t QueueCapacity = 4096, std::size_t FlushBatch = 128,
+          std::size_t MaxMsgSize = 1024>
+inline void set_async_file_emitter(
+    AsyncFileEmitter<QueueCapacity, FlushBatch, MaxMsgSize> &emitter) noexcept {
+  // Store pointer via void* to avoid template in global state
+  static_assert(sizeof(&emitter) <= sizeof(void *), "pointer too large");
+  auto *raw = reinterpret_cast<void *>(&emitter);
+  // We can't capture in a function pointer, so use a typed global
+  static AsyncFileEmitter<QueueCapacity, FlushBatch, MaxMsgSize> *saved =
+      nullptr;
+  saved = &emitter;
+  g_emit = [](Level, const char *data, std::size_t n) noexcept {
+    saved->emit(Level{}, data, n);
+  };
 }
 
 // ── Core log function ────────────────────────────────────────────────
