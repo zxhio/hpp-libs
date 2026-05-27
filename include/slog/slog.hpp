@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -8,30 +7,16 @@
 #include <charconv>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
 #include <string>
 #include <string_view>
-#include <sys/stat.h>
-#include <thread>
 #include <type_traits>
 #include <unistd.h>
 
-#include "spsc.hpp"
+#include "slog_backend.hpp"
 
 namespace slog {
 
-enum class Level : std::uint8_t {
-  Debug,
-  Info,
-  Warn,
-  Error,
-};
-
 inline Level g_level = Level::Info;
-
-using EmitFn = void (*)(Level, const char *data, std::size_t n);
-
-inline EmitFn g_emit = nullptr;
 
 inline std::string_view level_name(Level lv) noexcept {
   switch (lv) {
@@ -46,6 +31,10 @@ inline std::string_view level_name(Level lv) noexcept {
   }
   return "UNKNOWN";
 }
+
+// ---------------------------------------------------------------------------
+// Key / Field
+// ---------------------------------------------------------------------------
 
 template <std::size_t N>
 struct Key {
@@ -73,182 +62,9 @@ template <typename T>
 inline constexpr bool is_field_v =
     is_field<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
-// ── SyncFileEmitter ──────────────────────────────────────────────────
-
-namespace detail {
-
-inline void write_fd(int fd, const char *data, std::size_t n) noexcept {
-  while (n > 0) {
-    auto w = ::write(fd, data, n);
-    if (w <= 0)
-      break;
-    data += static_cast<std::size_t>(w);
-    n -= static_cast<std::size_t>(w);
-  }
-}
-
-inline int open_log_file(const char *path) noexcept {
-  return ::open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-}
-
-inline std::size_t file_size(int fd) noexcept {
-  struct stat st;
-  if (::fstat(fd, &st) != 0)
-    return 0;
-  return static_cast<std::size_t>(st.st_size);
-}
-
-inline void rotate_file(const char *base, int fd) noexcept {
-  ::close(fd);
-
-  auto now = std::chrono::system_clock::now();
-  auto tt = std::chrono::system_clock::to_time_t(now);
-  std::tm tm;
-  ::localtime_r(&tt, &tm);
-
-  // base.YYYYMMDDTHHMMSS.log
-  char path[512];
-  std::size_t len = std::strlen(base);
-  if (len + 24 >= sizeof(path))
-    return;
-
-  std::memcpy(path, base, len);
-  char *p = path + len;
-  *p++ = '.';
-
-  auto y = tm.tm_year + 1900;
-  *p++ = static_cast<char>('0' + y / 1000);
-  *p++ = static_cast<char>('0' + (y / 100) % 10);
-  *p++ = static_cast<char>('0' + (y / 10) % 10);
-  *p++ = static_cast<char>('0' + y % 10);
-  auto m = tm.tm_mon + 1;
-  *p++ = static_cast<char>('0' + m / 10);
-  *p++ = static_cast<char>('0' + m % 10);
-  auto d = tm.tm_mday;
-  *p++ = static_cast<char>('0' + d / 10);
-  *p++ = static_cast<char>('0' + d % 10);
-  *p++ = 'T';
-  *p++ = static_cast<char>('0' + tm.tm_hour / 10);
-  *p++ = static_cast<char>('0' + tm.tm_hour % 10);
-  *p++ = static_cast<char>('0' + tm.tm_min / 10);
-  *p++ = static_cast<char>('0' + tm.tm_min % 10);
-  *p++ = static_cast<char>('0' + tm.tm_sec / 10);
-  *p++ = static_cast<char>('0' + tm.tm_sec % 10);
-  std::memcpy(p, ".log", 4);
-  p += 4;
-  *p = '\0';
-
-  ::rename(base, path);
-}
-
-} // namespace detail
-
-class SyncFileEmitter {
-public:
-  SyncFileEmitter(const char *path, std::size_t max_size = 16 * 1024 * 1024)
-      : path_(path), fd_(detail::open_log_file(path)),
-        cur_size_(detail::file_size(fd_)), max_size_(max_size) {}
-
-  ~SyncFileEmitter() {
-    if (fd_ >= 0)
-      ::close(fd_);
-  }
-
-  SyncFileEmitter(const SyncFileEmitter &) = delete;
-  SyncFileEmitter &operator=(const SyncFileEmitter &) = delete;
-
-  void emit(Level, const char *data, std::size_t n) noexcept {
-    if (fd_ < 0)
-      return;
-
-    if (cur_size_ + n > max_size_) {
-      detail::rotate_file(path_, fd_);
-      fd_ = detail::open_log_file(path_);
-      cur_size_ = 0;
-    }
-
-    detail::write_fd(fd_, data, n);
-    cur_size_ += n;
-  }
-
-private:
-  const char *path_;
-  int fd_;
-  std::size_t cur_size_;
-  std::size_t max_size_;
-};
-
-// ── AsyncFileEmitter ─────────────────────────────────────────────────
-
-template <std::size_t QueueCapacity = 4096, std::size_t FlushBatch = 128,
-          std::size_t MaxMsgSize = 1024>
-class AsyncFileEmitter {
-public:
-  struct Message {
-    char data[MaxMsgSize];
-    std::size_t size;
-  };
-
-  explicit AsyncFileEmitter(const char *path,
-                            std::size_t max_size = 16 * 1024 * 1024)
-      : file_(path, max_size), running_(true) {
-    worker_ = std::thread([this] { run(); });
-  }
-
-  ~AsyncFileEmitter() { stop(); }
-
-  AsyncFileEmitter(const AsyncFileEmitter &) = delete;
-  AsyncFileEmitter &operator=(const AsyncFileEmitter &) = delete;
-
-  void emit(Level, const char *data, std::size_t n) noexcept {
-    if (n > MaxMsgSize)
-      n = MaxMsgSize;
-    Message msg;
-    std::memcpy(msg.data, data, n);
-    msg.size = n;
-
-    // Drop if queue full — non-blocking for the caller
-    queue_.try_push(msg);
-  }
-
-  void stop() noexcept {
-    if (!running_.exchange(false))
-      return;
-    if (worker_.joinable())
-      worker_.join();
-    // Drain remaining
-    Message msg;
-    while (queue_.try_pop(msg))
-      file_.emit(Level{}, msg.data, msg.size);
-  }
-
-private:
-  void run() noexcept {
-    Message msg;
-    std::size_t batch = 0;
-    while (running_.load(std::memory_order_relaxed)) {
-      if (queue_.try_pop(msg)) {
-        file_.emit(Level{}, msg.data, msg.size);
-        if (++batch >= FlushBatch) {
-          batch = 0;
-          // Yield to avoid busy-spin
-          std::this_thread::yield();
-        }
-      } else {
-        std::this_thread::yield();
-      }
-    }
-  }
-
-  SyncFileEmitter file_;
-  SpscQueue<Message, QueueCapacity> queue_;
-  std::atomic<bool> running_;
-  std::thread worker_;
-};
-
-inline void set_emitter(EmitFn fn) noexcept { g_emit = fn; }
-
-// ── Internal buffer & formatting ─────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Fixed buffer
+// ---------------------------------------------------------------------------
 
 namespace detail {
 
@@ -296,6 +112,14 @@ using SmallBuffer = FixedBuffer<256>;
 using MediumBuffer = FixedBuffer<1024>;
 using LargeBuffer = FixedBuffer<4096>;
 using DefaultBuffer = MediumBuffer;
+
+} // namespace detail
+
+// ---------------------------------------------------------------------------
+// Value formatting
+// ---------------------------------------------------------------------------
+
+namespace detail {
 
 inline bool needs_escape(std::string_view sv) noexcept {
   for (char c : sv) {
@@ -490,6 +314,14 @@ inline void write_value(BufferT &buf, const T &v) noexcept {
   ValueWriter<BufferT, std::remove_cv_t<std::remove_reference_t<T>>>::write(buf, v);
 }
 
+} // namespace detail
+
+// ---------------------------------------------------------------------------
+// Record
+// ---------------------------------------------------------------------------
+
+namespace detail {
+
 template <typename BufferT>
 inline void write_timestamp(BufferT &buf) noexcept {
   using namespace std::chrono;
@@ -499,7 +331,7 @@ inline void write_timestamp(BufferT &buf) noexcept {
   std::tm tm;
   ::localtime_r(&tt, &tm);
 
-  char tmp[24]; // "2026-05-26T15:30:45.123"
+  char tmp[24];
   tmp[0] = static_cast<char>('0' + (tm.tm_year + 1900) / 1000);
   tmp[1] = static_cast<char>('0' + ((tm.tm_year + 1900) / 100) % 10);
   tmp[2] = static_cast<char>('0' + ((tm.tm_year + 1900) / 10) % 10);
@@ -566,7 +398,15 @@ private:
 
 } // namespace detail
 
-// ── Global file emitter support ──────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Emitter dispatch
+// ---------------------------------------------------------------------------
+
+using EmitFn = void (*)(Level, const char *data, std::size_t n);
+
+inline EmitFn g_emit = nullptr;
+
+inline void set_emitter(EmitFn fn) noexcept { g_emit = fn; }
 
 inline SyncFileEmitter *g_file_emitter = nullptr;
 
@@ -592,10 +432,6 @@ template <std::size_t QueueCapacity = 4096, std::size_t FlushBatch = 128,
           std::size_t MaxMsgSize = 1024>
 inline void set_async_file_emitter(
     AsyncFileEmitter<QueueCapacity, FlushBatch, MaxMsgSize> &emitter) noexcept {
-  // Store pointer via void* to avoid template in global state
-  static_assert(sizeof(&emitter) <= sizeof(void *), "pointer too large");
-  auto *raw = reinterpret_cast<void *>(&emitter);
-  // We can't capture in a function pointer, so use a typed global
   static AsyncFileEmitter<QueueCapacity, FlushBatch, MaxMsgSize> *saved =
       nullptr;
   saved = &emitter;
@@ -604,7 +440,9 @@ inline void set_async_file_emitter(
   };
 }
 
-// ── Core log function ────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Core log function
+// ---------------------------------------------------------------------------
 
 template <typename BufferT = detail::DefaultBuffer, std::size_t N,
           typename... Fields>
