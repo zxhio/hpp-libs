@@ -1,6 +1,0 @@
-.vscode/
-
-*.o
-*.d
-*.clangd
-*compile_commands.json

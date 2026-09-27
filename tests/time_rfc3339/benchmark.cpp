@@ -9,7 +9,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
-#include <time_rfc3339.h>
+#include <time_rfc3339/time_rfc3339.h>
 
 using namespace time_rfc3339;
 

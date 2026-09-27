@@ -11,8 +11,13 @@
 
 #include <time.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <type_traits>
+#include <utility>
 
 namespace time_rfc3339 {
 

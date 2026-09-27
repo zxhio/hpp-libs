@@ -7,6 +7,7 @@ Header-only C++ utility libraries. Each component lives in its own directory und
 | Component | Path | Namespace | Description |
 |-----------|------|-----------|-------------|
 | slog | `include/slog/` | `slog` | Lightweight structured logging |
+| time_rfc3339 | `include/time_rfc3339/` | `time_rfc3339` | RFC3339 date-time formatting |
 
 ## Requirements
 
@@ -31,6 +32,7 @@ target_link_libraries(your_target PRIVATE hpp::libs)
 
 ```cpp
 #include <slog/slog.hpp>
+#include <time_rfc3339/time_rfc3339.h>
 
 int main() {
     slog::g_level = slog::Level::Info;
@@ -40,6 +42,15 @@ int main() {
     LOG_INFO("listening", slog::K("port", 8080), slog::K("addr", "0.0.0.0"));
 }
 ```
+
+RFC3339 formatting:
+
+```cpp
+auto timestamp = time_rfc3339::Time::now().formatNano();
+```
+
+The time component is header-only and supports C++11 APIs while being
+available through the C++17 library target.
 
 ### Value Types
 
@@ -102,3 +113,7 @@ log (3 fields)                  0.7 ns/op
 ## License
 
 MIT
+
+## Component Documentation
+
+- [time_rfc3339](docs/time_rfc3339.md)

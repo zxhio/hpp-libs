@@ -19,3 +19,12 @@ if(HPP_LIBS_BUILD_EXAMPLES)
   target_link_libraries(slog_benchmark PRIVATE hpp::libs)
   target_compile_options(slog_benchmark PRIVATE -O2)
 endif()
+
+option(HPP_LIBS_BUILD_TESTS "Build tests" OFF)
+if(HPP_LIBS_BUILD_TESTS)
+  enable_testing()
+
+  add_executable(time_rfc3339_test tests/time_rfc3339/test.cpp)
+  target_link_libraries(time_rfc3339_test PRIVATE hpp::libs)
+  add_test(NAME time_rfc3339_test COMMAND time_rfc3339_test)
+endif()

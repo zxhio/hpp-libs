@@ -4,7 +4,11 @@ Date and time library for RFC3339 with C++11 implementation.
 
 ## Usage
 
-Header only, simply include time_rfc3339.h .
+Header-only library:
+
+```cpp
+#include <time_rfc3339/time_rfc3339.h>
+```
 
 ### Get date-time relative info
 
